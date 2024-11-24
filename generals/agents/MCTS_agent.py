@@ -26,6 +26,7 @@ class Node:
         self.done = done # win/loss/draw
         self.parent = weakref.ref(parent) if parent is not None else None # link to parent
         self.action_index = action_index # action leads to current node
+        self.model = None  ### TO DO: want to train a deepQ model
     
     def getUCBscore(self): 
         if self.N == 0:  # if unexplored nodes, maximum probability
@@ -129,41 +130,7 @@ class Node:
             }
                 #if loud: print("no valid action option in MCTS rollout")
             else:
-                #if loud: print("valid action in MCTS rollout")    ### better model?
-                # army = mcts_observation["observation"]["armies"]    
-                # opponent = mcts_observation["observation"]["opponent_cells"]
-                # neutral = mcts_observation["observation"]["neutral_cells"]
-
-                # # Find actions that capture opponent or neutral cells
-                # actions_capture_opponent = np.zeros(len(valid_actions))
-                # actions_capture_neutral = np.zeros(len(valid_actions))
-
-                # directions = [Direction.UP, Direction.DOWN, Direction.LEFT, Direction.RIGHT]
-                # for i, action in enumerate(valid_actions):
-                #     di, dj = action[:-1] + directions[action[-1]].value  # Destination cell indices
-                #     if army[action[0], action[1]] <= army[di, dj] + 1:  # Can't capture
-                #         continue
-                #     elif opponent[di, dj]:
-                #         actions_capture_opponent[i] = 1
-                #     elif neutral[di, dj]:
-                #         actions_capture_neutral[i] = 1
-
-                # if np.any(actions_capture_opponent):  # Capture random opponent cell if possible
-                #     action_index = np.random.choice(np.nonzero(actions_capture_opponent)[0])
-                #     action = valid_actions[action_index]
-                # elif np.any(actions_capture_neutral):  # Capture random neutral cell if possible
-                #     action_index = np.random.choice(np.nonzero(actions_capture_neutral)[0])
-                #     action = valid_actions[action_index]
-                # else:  # Otherwise, select a random valid action
-                #     action_index = np.random.choice(len(valid_actions))
-                #     action = valid_actions[action_index]
-
-                # action = {
-                #     "pass": 0,
-                #     "cell": action[:2],
-                #     "direction": action[2],
-                #     "split": 0,
-                # }
+                #if loud: print("valid action in MCTS rollout")    ### better model?->how about a RL model
 
                 pass_turn = 0 if np.random.rand() > 0.05 else 1
                 split_army = 0 if np.random.rand() > 0.25 else 1
@@ -201,7 +168,7 @@ class Node:
 
 
     def next(self):
-        if self.done: raise ValueError("game has ended")
+        # if self.done: raise ValueError("game has ended")
         if not self.child: raise ValueError("no children found and game hasn't ended")
         child = self.child 
         max_N = max(node.N for node in child.values())
@@ -212,7 +179,7 @@ class Node:
         max_child = random.choice(max_children)
         return max_child, max_child.action_index
 
-MCTS_POLICY_EXPLORE = 100   ### To improve: number of exploration
+MCTS_POLICY_EXPLORE = 20   ### To improve: number of exploration
 
 def Policy_MCTS(mytree):
     for i in range(MCTS_POLICY_EXPLORE):
@@ -239,7 +206,7 @@ class MCTSAgent(Agent):
         mask = observation["action_mask"]
         observation = observation["observation"]
         valid_actions = np.argwhere(mask == 1)
-        if len(valid_actions) == 0:
+        if len(valid_actions) == 0 or done:
             if loud: print("DO nothing in MCTSAgent.act")
             return {
                 "pass": 1,
