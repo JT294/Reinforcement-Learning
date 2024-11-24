@@ -6,6 +6,8 @@ from copy import deepcopy
 import weakref
 import gymnasium as gym
 from concurrent.futures import ThreadPoolExecutor
+import torch
+import os
 
 from generals.core.config import Direction
 from generals.core.game import Action, Game 
@@ -13,10 +15,12 @@ from generals.core.observation import Observation
 
 from .agent import Agent
 from .expander_agent import ExpanderAgent 
+from .deepQ import Qfunction
 
 loud = False 
 debuging = False
 class Node:
+    shared_model = None
     def __init__(self, game, done, parent, observation, action_index):
         self.child = None 
         self.T = 0  # total rewards from MCTS exploration
@@ -26,8 +30,33 @@ class Node:
         self.done = done # win/loss/draw ## True/False now
         self.parent = weakref.ref(parent) if parent is not None else None # link to parent
         self.action_index = action_index # action leads to current node
-        self.model = None  ### TO DO: want to train a deepQ model
-    
+        self.model = Node.shared_model  ### TO DO: want to train a deepQ model
+    @classmethod
+    def set_shared_model(cls, model_path, obs, grid_size, lr=1e-3):
+        if os.path.exists(model_path):
+            q_function = Qfunction(grid_size, lr=lr)
+            en_obs = q_function.encode_observation(obs)
+            action_space = 2 * grid_size[0] * grid_size[1] * 4 * 2
+            q_function.initialize_model(len(en_obs),action_space)
+            q_function.model.load_state_dict(torch.load(model_path))
+            q_function.model.eval()
+            cls.shared_model = q_function
+        else:
+            print(f"Model file '{model_path}' does not exist. Skipping load.")
+    def copynode(self):
+        new_node = Node(
+            game=deepcopy(self.game),
+            done=self.done,
+            parent=None,  # parent 使用 weakref，不需要深复制
+            observation=self.observation,
+            action_index=self.action_index,
+        )
+        # 深复制其他属性
+        new_node.child = deepcopy(self.child)
+        new_node.T = self.T
+        new_node.N = self.N
+        return new_node
+            
     def getUCBscore(self): 
         if self.N == 0:  # if unexplored nodes, maximum probability
             return  float('inf')
@@ -129,7 +158,7 @@ class Node:
                 "split": 0,
             }
                 #if loud: print("no valid action option in MCTS rollout")
-            else:
+            elif self.model == None:
                 #if loud: print("valid action in MCTS rollout")    ### better model?->how about a RL model
 
                 pass_turn = 0 if np.random.rand() > 0.05 else 1
@@ -145,6 +174,12 @@ class Node:
                     "direction": direction,
                     "split": split_army,
                 }
+            else:
+                encode_obs = self.model.encode_observation(mcts_observation)
+                encode_obs = torch.FloatTensor(encode_obs).unsqueeze(0)
+                with torch.no_grad():
+                    action = self.model.compute_argmaxQ(encode_obs)
+
 
             observation, info = new_game.step({"MCTS": action, "Expander": npc.act(npc_observation)})  ## problem? need to mimic both agent and npc
             mcts_observation = observation["MCTS"].as_dict()
@@ -199,6 +234,7 @@ class MCTSAgent(Agent):
     def act(self, observation: Observation, game: Game, done: bool, prev_act: Action) -> Action:  # TO DO: the type of game 
         ### TODO: define and train the MCTS model
         if self.tree == None: # create root
+            Node.set_shared_model("q_function_model.pth", observation,(5, 5))
             self.tree = Node(game, done, None, observation, None)  ### TO DO: parent?
             self.current = self.tree
         self.current.observation = observation  ### do we need refresh current node?
@@ -228,7 +264,7 @@ class MCTSAgent(Agent):
                 "split": split_army,
             }
         else:
-            child_node, action = Policy_MCTS(deepcopy(self.current))  ## TO DO: from where do MCTS
+            child_node, action = Policy_MCTS(self.current.copynode())#Policy_MCTS(deepcopy(self.current))  ## TO DO: from where do MCTS
             self.current.child = child_node
             child_node.parent = self.current
             self.current = self.current.child

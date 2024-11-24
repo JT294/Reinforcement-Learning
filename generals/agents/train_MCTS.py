@@ -13,7 +13,7 @@ import numpy as np
 loud = False
 lr = 1e-3
 tau = 100 
-episodes = 300
+episodes = 3
 initialsize = 500 
 epsilon = .2
 epsilon_decay = .999 
@@ -42,8 +42,8 @@ env = gym.make("gym-generals-v0", grid_factory=grid_factory, agent=agent, npc=np
 observation, info = env.reset()
 terminated = truncated = False
 replay_buffer = deque(maxlen=10000)
-Qprincipal = Qfunction((5, 5), lr=lr)
-Qtarget =  Qfunction((5, 5), lr=lr)
+Qprincipal = Qfunction((grid_width, grid_height), lr=lr)
+Qtarget =  Qfunction((grid_width, grid_height), lr=lr)
 encoded_state = Qprincipal.encode_observation(observation)
 # sample_action = {"pass": 0, "cell": [0, 0], "direction": 0, "split": 0}
 # encoded_action = Qprincipal.encode_action(sample_action, grid_width=grid_width, grid_height=grid_height)
@@ -54,7 +54,7 @@ Qtarget.initialize_model(len(encoded_state), action_space)
 for e in range(episodes):
     agent = MCTSAgent()
     observation, info = env.reset()
-    state = Qprincipal.encode_observation(observation)
+    # state = Qprincipal.encode_observation(observation)
     terminated, truncated = False, False 
     prev_act = 0
     while not (terminated or truncated):
@@ -71,6 +71,7 @@ for e in range(episodes):
         prev_act = action      
         encoded_action = Qprincipal.encode_action(action, grid_width=grid_width, grid_height=grid_height)
         next_state = Qprincipal.encode_observation(next_obs)
+        state = Qprincipal.encode_observation(observation)
         replay_buffer.append((state, encoded_action, reward, next_state, terminated))
         # while replay_buffer
         if len(replay_buffer)>32:
@@ -81,12 +82,12 @@ for e in range(episodes):
                 
             batch = random.sample(replay_buffer, 32)
             states, actions, rewards, next_state, done = zip(*batch)
-            states = torch.FloatTensor(states)
+            states = torch.FloatTensor(np.array(states))
             # actions = [Qtarget.decode_action(ac, grid_width=grid_width, grid_height=grid_height) for ac in actions]
             actions = [torch.tensor(action) if not isinstance(action, torch.Tensor) else action for action in actions] ### need to check problem
             actions = torch.stack(actions)
             rewards = torch.FloatTensor(rewards)
-            next_state = torch.FloatTensor(next_state)
+            next_state = torch.FloatTensor(np.array(next_state))
             done = torch.FloatTensor(done)
             max_next_Q = Qtarget.compute_maxQvalues(next_state)
             targets = rewards + gamma * max_next_Q * (1 - done)
@@ -98,12 +99,11 @@ for e in range(episodes):
         if epsilon > 0.01:
             epsilon *= epsilon_decay        
         observation = next_obs
-        next_state = next_state.numpy()[0] if isinstance(next_state, torch.Tensor) else next_state
-        state = next_state
+        # next_state = next_state.numpy()[0] if isinstance(next_state, torch.Tensor) else next_state
+        # state = Qprincipal.encode_observation(observation)#next_state
         total_reward += reward
         steps += 1
         env.render()
     print(f"Episode {e + 1}, Total Reward: {total_reward}, Steps: {steps}")
-
 torch.save(Qprincipal.model.state_dict(), "q_function_model.pth")
 print("Model saved.")
