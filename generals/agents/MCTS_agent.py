@@ -14,7 +14,7 @@ from generals.core.observation import Observation
 from .agent import Agent
 from .expander_agent import ExpanderAgent 
 
-loud = True
+loud = False 
 debuging = False
 class Node:
     def __init__(self, game, done, parent, observation, action_index):
@@ -23,7 +23,7 @@ class Node:
         self.N = 0  # visit count
         self.game = game # environment
         self.observation = observation  # observation of environment
-        self.done = done # win/loss/draw
+        self.done = done # win/loss/draw ## True/False now
         self.parent = weakref.ref(parent) if parent is not None else None # link to parent
         self.action_index = action_index # action leads to current node
         self.model = None  ### TO DO: want to train a deepQ model
@@ -84,7 +84,7 @@ class Node:
     def explore(self):
         # find leaf node by choosing nodes with max U
         current = self
-        while current.child:
+        while current.child and self.done == False:
             child = current.child 
             max_U = max(c.getUCBscore() for c in child.values()) # c in Node type
             actions = [a for a,c in child.items() if c.getUCBscore() == max_U]
@@ -169,7 +169,7 @@ class Node:
 
     def next(self):
         # if self.done: raise ValueError("game has ended")
-        if not self.child: raise ValueError("no children found and game hasn't ended")
+        if not self.child: return self, self.action_index# raise ValueError("no children found and game hasn't ended")
         child = self.child 
         max_N = max(node.N for node in child.values())
         max_children = [c for a,c in child.items() if c.N == max_N]
@@ -182,6 +182,7 @@ class Node:
 MCTS_POLICY_EXPLORE = 20   ### To improve: number of exploration
 
 def Policy_MCTS(mytree):
+    # if mytree.done: return mytree, mytree.action_index ### is it right?
     for i in range(MCTS_POLICY_EXPLORE):
         if loud: print("exploring", i)
         mytree.explore()
@@ -206,7 +207,7 @@ class MCTSAgent(Agent):
         mask = observation["action_mask"]
         observation = observation["observation"]
         valid_actions = np.argwhere(mask == 1)
-        if len(valid_actions) == 0 or done:
+        if len(valid_actions) == 0 or done or self.current.done:
             if loud: print("DO nothing in MCTSAgent.act")
             return {
                 "pass": 1,

@@ -1,7 +1,7 @@
 import torch 
 import numpy as np 
 from collections import deque 
-loud = True
+loud = False
 class Qfunction(object):
     def __init__(self, gridsize, lr):
         self.gridsize = gridsize 

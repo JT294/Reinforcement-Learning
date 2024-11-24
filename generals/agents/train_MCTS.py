@@ -10,7 +10,7 @@ import random
 import torch
 import numpy as np
 
-loud = True
+loud = False
 lr = 1e-3
 tau = 100 
 episodes = 300
