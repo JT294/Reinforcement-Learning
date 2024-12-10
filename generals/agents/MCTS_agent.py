@@ -17,7 +17,7 @@ from .agent import Agent
 from .expander_agent import ExpanderAgent 
 from .deepQ import Qfunction
 
-loud = False 
+loud = False
 debuging = False
 class Node:
     shared_model = None
@@ -36,7 +36,7 @@ class Node:
         if os.path.exists(model_path):
             q_function = Qfunction(grid_size, lr=lr)
             en_obs = q_function.encode_observation(obs)
-            action_space = 2 * grid_size[0] * grid_size[1] * 4 * 2
+            action_space = 2 + grid_size[0] * grid_size[1] + 4 + 2
             q_function.initialize_model(len(en_obs),action_space)
             q_function.model.load_state_dict(torch.load(model_path))
             q_function.model.eval()
@@ -140,7 +140,7 @@ class Node:
         if self.done:
             return 0
         step = 0
-        max_step = 100 ### To improve: truncated number
+        max_step = 150 ### To improve: truncated number
         new_game = deepcopy(self.game)
         npc = ExpanderAgent()
         mcts_observation = self.observation
@@ -176,7 +176,7 @@ class Node:
                 }
             else:
                 encode_obs = self.model.encode_observation(mcts_observation)
-                encode_obs = torch.FloatTensor(encode_obs).unsqueeze(0)
+                encode_obs = torch.FloatTensor(encode_obs)#.unsqueeze(0)
                 with torch.no_grad():
                     action = self.model.compute_argmaxQ(encode_obs)
 
@@ -188,17 +188,18 @@ class Node:
 
                 if new_game.agent_won('MCTS'):   # TO DO: I guess, or new_game.agents[0]
                     if loud: print("MCTS rollout")
-                    return 1
+                    return 1/mcts_observation["observation"]["timestep"]
                 else:
                     if loud: print("Expander rollout")
                     return -1
             if step >= max_step:   ## To imporve: truncated score reward
-                status = new_game.get_infos()
-                mct_army, mct_land = status["MCTS"]["army"], status["MCTS"]["land"]
-                npc_army, npc_land = status["Expander"]["army"], status["Expander"]["land"]
-                army_score = mct_army/(mct_army+npc_army)
-                land_score = mct_land/(mct_land+npc_land)
-                return 0.7 * land_score + 0.3 * army_score # (2 * army_score * land_score) / (army_score + land_score)
+                return -1/max_step
+                # status = new_game.get_infos()
+                # mct_army, mct_land = status["MCTS"]["army"], status["MCTS"]["land"]
+                # npc_army, npc_land = status["Expander"]["army"], status["Expander"]["land"]
+                # army_score = mct_army/(mct_army+npc_army)
+                # land_score = mct_land/(mct_land+npc_land)
+                # return 0.7 * land_score + 0.3 * army_score # (2 * army_score * land_score) / (army_score + land_score)
 
 
 
@@ -214,7 +215,7 @@ class Node:
         max_child = random.choice(max_children)
         return max_child, max_child.action_index
 
-MCTS_POLICY_EXPLORE = 20   ### To improve: number of exploration
+MCTS_POLICY_EXPLORE = 50   ### To improve: number of exploration
 
 def Policy_MCTS(mytree):
     # if mytree.done: return mytree, mytree.action_index ### is it right?
@@ -231,18 +232,45 @@ class MCTSAgent(Agent):
         self.tree = None
         self.current = None
     
-    def act(self, observation: Observation, game: Game, done: bool, prev_act: Action) -> Action:  # TO DO: the type of game 
+    def encode_valid_action(self, valid_actions, split = 0, grid_width = 5, grid_height = 5):
+        total_cells = grid_width * grid_height
+        total_directions = 4
+        total_splits = 2
+        total_passes = 2  # Assuming 'pass' can be 0 or 1
+
+        num_actions = valid_actions.shape[0]
+        size = total_cells + total_directions + total_splits + total_passes
+
+        # Indices for each component
+        pass_indices = torch.zeros(num_actions, dtype=torch.long)
+        cell_indices = valid_actions[:, 0] * grid_width + valid_actions[:, 1] + total_passes
+        direction_indices = valid_actions[:, 2] + total_passes + total_cells
+        split_indices = valid_actions[:, 2] + total_passes + total_cells + split  # Assuming split relates to direction
+
+        # Creating one-hot encoded tensor
+        one_hot_encoded = torch.zeros(num_actions, size, dtype=torch.int)
+        
+        # Using index_fill_ to set values at specific indices
+        one_hot_encoded.scatter_(1, pass_indices.unsqueeze(1), 1)
+        one_hot_encoded.scatter_(1, cell_indices.unsqueeze(1), 1)
+        one_hot_encoded.scatter_(1, direction_indices.unsqueeze(1), 1)
+        one_hot_encoded.scatter_(1, split_indices.unsqueeze(1), 1)
+
+        return one_hot_encoded
+
+    def act(self, observation: Observation, game: Game, done: bool, prev_act: Action, train = True) -> Action:  # TO DO: the type of game 
         ### TODO: define and train the MCTS model
         if self.tree == None: # create root
-            Node.set_shared_model("q_function_model.pth", observation,(5, 5))
+            Node.set_shared_model("q_function_model_2.pth", observation,(5, 5))
             self.tree = Node(game, done, None, observation, None)  ### TO DO: parent?
             self.current = self.tree
         self.current.observation = observation  ### do we need refresh current node?
         self.current.game = game
         # if debuging:
         mask = observation["action_mask"]
-        observation = observation["observation"]
+        # observation = observation["observation"]
         valid_actions = np.argwhere(mask == 1)
+        print(valid_actions)
         if len(valid_actions) == 0 or done or self.current.done:
             if loud: print("DO nothing in MCTSAgent.act")
             return {
@@ -263,13 +291,49 @@ class MCTSAgent(Agent):
                 "direction": direction,
                 "split": split_army,
             }
-        else:
+        elif train:
             child_node, action = Policy_MCTS(self.current.copynode())#Policy_MCTS(deepcopy(self.current))  ## TO DO: from where do MCTS
             self.current.child = child_node
             child_node.parent = self.current
             self.current = self.current.child
             # observation, info = game.step(action)  # maybe action["MCTS"]
-
+        else: ## not train
+            self.current = Node(game, done, None, observation, None)
+            encode_obs = self.current.shared_model.encode_observation(observation, with_mask=True)
+            encode_obs = torch.FloatTensor(encode_obs)#.unsqueeze(0)
+            with torch.no_grad():
+                t_va = torch.tensor(valid_actions)
+                t_validaction = torch.concat((self.encode_valid_action(t_va, 0), self.encode_valid_action(t_va, 1)), dim = 0)
+                q_values = self.current.shared_model.compute_Qvalues(encode_obs)
+                valid_q = torch.matmul(q_values,t_validaction.float().transpose(0, 1))
+                action = self.current.shared_model.decode_action(t_validaction[valid_q.argmax()], 5, 5)#.compute_argmaxQ(encode_obs)
+            if loud: print('argmax action',action)
         return action 
     def reset(self):
         pass
+
+
+def DeepQAgent(Agent):
+    def __init__(self, id: str = 'DeepQ', color: tuple[int, int, int] = (255, 165, 0), gridsize=(5, 5), lr=1e-3):
+        super().__init__(id, color)
+        self.model = Qfunction(gridsize, lr)
+        self.gridsize = gridsize
+        self.lr = lr
+    
+    def initialize(self, model_path, obs):
+        if os.path.exists(model_path):
+            en_obs = self.model.encode_observation(obs)
+            action_space = 2 * self.grid_size[0] * self.grid_size[1] * 4 * 2
+            self.model.initialize_model(len(en_obs),action_space)
+            self.model.loadload_state_dict(torch.load(model_path))
+            self.model.eval()
+        else:
+            print(f"Model file '{model_path}' does not exist. Skipping load.")
+    
+    def act(self, observation: Observation, game: Game, done: bool, prev_act: Action) -> Action:
+            encode_obs = self.model.encode_observation(observation, with_mask=True)
+            encode_obs = torch.FloatTensor(encode_obs).unsqueeze(0)
+            with torch.no_grad():
+                action = self.model.compute_argmaxQ(encode_obs)
+            if loud: print('argmax action',action)   
+            return action     

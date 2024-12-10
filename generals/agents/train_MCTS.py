@@ -12,12 +12,11 @@ import numpy as np
 
 loud = False
 lr = 1e-3
-tau = 100 
-episodes = 3
+tau = 5
+episodes = 150
 initialsize = 500 
 epsilon = .2
 epsilon_decay = .999 
-tau = 100 
 gamma = .99
 total_reward = 0
 steps = 0
@@ -38,18 +37,43 @@ def unwrap_game(env):
         env = env.env
     return getattr(env, "game", None)  # 获取底层环境的 game 属性
 
-env = gym.make("gym-generals-v0", grid_factory=grid_factory, agent=agent, npc=npc, render_mode="human")
+def reward_function(observation,action,done,info):
+    if done:
+        if info["is_winner"]:
+            return 1
+        else:
+            return -1
+    else:
+        return 0
+class ExperienceReplayBuffer:
+    def __init__(self, capacity=10000):
+        self.buffer = []
+        self.capacity = capacity
+
+    def push(self, experience):
+        if len(self.buffer) >= self.capacity:
+            self.buffer.pop(0)
+        self.buffer.append(experience)
+
+    def sample(self, batch_size):
+        return random.sample(self.buffer, batch_size)
+
+    def __len__(self):
+        return len(self.buffer)
+
+env = gym.make("gym-generals-v0", grid_factory=grid_factory, agent=agent, npc=npc, render_mode="human", reward_fn=reward_function)
 observation, info = env.reset()
 terminated = truncated = False
-replay_buffer = deque(maxlen=10000)
+replay_buffer = ExperienceReplayBuffer()#deque(maxlen=10000)
 Qprincipal = Qfunction((grid_width, grid_height), lr=lr)
 Qtarget =  Qfunction((grid_width, grid_height), lr=lr)
 encoded_state = Qprincipal.encode_observation(observation)
 # sample_action = {"pass": 0, "cell": [0, 0], "direction": 0, "split": 0}
 # encoded_action = Qprincipal.encode_action(sample_action, grid_width=grid_width, grid_height=grid_height)
-action_space = 2 * grid_width * grid_height * 4 * 2
+action_space = 2 + grid_width * grid_height + 4 + 2
 Qprincipal.initialize_model(len(encoded_state), action_space)
 Qtarget.initialize_model(len(encoded_state), action_space)
+
 
 for e in range(episodes):
     agent = MCTSAgent()
@@ -72,7 +96,7 @@ for e in range(episodes):
         encoded_action = Qprincipal.encode_action(action, grid_width=grid_width, grid_height=grid_height)
         next_state = Qprincipal.encode_observation(next_obs)
         state = Qprincipal.encode_observation(observation)
-        replay_buffer.append((state, encoded_action, reward, next_state, terminated))
+        replay_buffer.push((state, encoded_action, reward, next_state, terminated))
         # while replay_buffer
         if len(replay_buffer)>32:
             if loud:
@@ -80,7 +104,7 @@ for e in range(episodes):
                     for idx, entry in enumerate(replay_buffer):
                         file.write(f"Entry {idx}:\n{entry}\n\n")
                 
-            batch = random.sample(replay_buffer, 32)
+            batch = replay_buffer.sample(32)#random.sample(replay_buffer, 32)
             states, actions, rewards, next_state, done = zip(*batch)
             states = torch.FloatTensor(np.array(states))
             # actions = [Qtarget.decode_action(ac, grid_width=grid_width, grid_height=grid_height) for ac in actions]
@@ -105,5 +129,27 @@ for e in range(episodes):
         steps += 1
         env.render()
     print(f"Episode {e + 1}, Total Reward: {total_reward}, Steps: {steps}")
-torch.save(Qprincipal.model.state_dict(), "q_function_model.pth")
+torch.save(Qprincipal.model.state_dict(), "q_function_model_3.pth")
 print("Model saved.")
+
+# def evaluate(Q, env, episodes):
+#     score = 0
+#     for e in range(episodes):
+#         obs, info = env.reset()
+#         done = False
+#         rsum = 0
+#         while not done:
+#             encode_obs = Q.encode_observation(obs, with_mask=True)
+#             encode_obs = torch.FloatTensor(encode_obs).unsqueeze(0)
+#             with torch.no_grad():
+#                 action = Q.compute_argmaxQ(encode_obs)
+#             newobs, r, terminated, truncated, info  = env.step(action)
+#             rsum += r 
+#             obs = newobs 
+#         score += rsum 
+#     score = score/episodes 
+#     return score 
+
+# observation, info = env.reset()
+# score = evaluate(Qprincipal, env, 100)
+# print("eval performance of DQN agent: {}".format(score))

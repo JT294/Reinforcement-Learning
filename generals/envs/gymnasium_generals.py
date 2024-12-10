@@ -105,7 +105,7 @@ class GymnasiumGenerals(gym.Env):
         actions = {self.agent_id: action, self.npc.id: npc_action}
 
         observations, infos = self.game.step(actions)
-        infos = {agent_id: {} for agent_id in self.agent_ids}
+        # infos = {agent_id: {} for agent_id in self.agent_ids}  ### not compatble for multiagent
 
         # From observations of all agents, pick only those relevant for the main agent
         obs = observations[self.agent_id].as_dict()
