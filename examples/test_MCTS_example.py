@@ -27,26 +27,17 @@ def unwrap_game(env):
     return getattr(env, "game", None)  # 获取底层环境的 game 属性
 
 env = gym.make("gym-generals-v0", grid_factory=grid_factory, agent=agent, npc=npc, render_mode="human", reward_fn=reward_function)
-observation, info = env.reset()
+options = {
+    "replay_file": "my_replay_1",  # Save replay as my_replay.pkl
+}
+observation, info = env.reset(options=options)
 terminated = truncated = False
 prev_action = None
 while not (terminated or truncated):
     game = unwrap_game(env)
     if game is None:
         raise RuntimeError("The environment does not contain a 'game' attribute.")
-    action = agent.act(observation, game, terminated, prev_action, False)
+    action = agent.act(observation, game, terminated, prev_action) #, False)
     observation, reward, terminated, truncated, info = env.step(action)
     prev_action = action 
     env.render()
-
-
-
-# generals = GymnasiumGenerals(grid_factory, npc, agent, None, None, render_mode="human")
-# observation, info = generals.reset()
-# terminated = truncated = False 
-# prev_action = None
-# while not (terminated or truncated):
-#     action = agent.act(observation, generals.game, (terminated or truncated), prev_action)
-#     observation, reward, terminated, truncated, info = generals.step(action)
-#     prev_action = action
-#     generals.render()

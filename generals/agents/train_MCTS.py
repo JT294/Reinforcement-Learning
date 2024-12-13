@@ -9,11 +9,13 @@ from collections import deque
 import random
 import torch
 import numpy as np
+import matplotlib.pyplot as plt
 
+model_name = "q_function_model_6"
 loud = False
 lr = 1e-3
 tau = 5
-episodes = 150
+episodes = 30
 initialsize = 500 
 epsilon = .2
 epsilon_decay = .999 
@@ -74,7 +76,7 @@ action_space = 2 + grid_width * grid_height + 4 + 2
 Qprincipal.initialize_model(len(encoded_state), action_space)
 Qtarget.initialize_model(len(encoded_state), action_space)
 
-
+ave_reward = []
 for e in range(episodes):
     agent = MCTSAgent()
     observation, info = env.reset()
@@ -128,28 +130,17 @@ for e in range(episodes):
         total_reward += reward
         steps += 1
         env.render()
+    ave_reward.append(total_reward/steps)
     print(f"Episode {e + 1}, Total Reward: {total_reward}, Steps: {steps}")
-torch.save(Qprincipal.model.state_dict(), "q_function_model_3.pth")
+torch.save(Qprincipal.model.state_dict(), f"{model_name}.pth")
 print("Model saved.")
 
-# def evaluate(Q, env, episodes):
-#     score = 0
-#     for e in range(episodes):
-#         obs, info = env.reset()
-#         done = False
-#         rsum = 0
-#         while not done:
-#             encode_obs = Q.encode_observation(obs, with_mask=True)
-#             encode_obs = torch.FloatTensor(encode_obs).unsqueeze(0)
-#             with torch.no_grad():
-#                 action = Q.compute_argmaxQ(encode_obs)
-#             newobs, r, terminated, truncated, info  = env.step(action)
-#             rsum += r 
-#             obs = newobs 
-#         score += rsum 
-#     score = score/episodes 
-#     return score 
+x = np.array(list(range(episodes)))
+plt.plot(x,ave_reward)
+plt.title("average reward")
+plt.xlabel("episodes")
+plt.ylabel("Average Reward")
+plt.grid()
+plt.savefig(f"{model_name}.png", dpi=300)  # 指定文件名和分辨率
+plt.show()
 
-# observation, info = env.reset()
-# score = evaluate(Qprincipal, env, 100)
-# print("eval performance of DQN agent: {}".format(score))

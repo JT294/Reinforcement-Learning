@@ -56,7 +56,32 @@ class Node:
         new_node.T = self.T
         new_node.N = self.N
         return new_node
-            
+
+    def encode_valid_action(self, valid_actions, split = 0, grid_width = 5, grid_height = 5):
+        total_cells = grid_width * grid_height
+        total_directions = 4
+        total_splits = 2
+        total_passes = 2  # Assuming 'pass' can be 0 or 1
+
+        num_actions = valid_actions.shape[0]
+        size = total_cells + total_directions + total_splits + total_passes
+
+        # Indices for each component
+        pass_indices = torch.zeros(num_actions, dtype=torch.long)
+        cell_indices = valid_actions[:, 0] * grid_width + valid_actions[:, 1] + total_passes
+        direction_indices = valid_actions[:, 2] + total_passes + total_cells
+        split_indices = valid_actions[:, 2] + total_passes + total_cells + split  # Assuming split relates to direction
+
+        # Creating one-hot encoded tensor
+        one_hot_encoded = torch.zeros(num_actions, size, dtype=torch.int)
+        
+        # Using index_fill_ to set values at specific indices
+        one_hot_encoded.scatter_(1, pass_indices.unsqueeze(1), 1)
+        one_hot_encoded.scatter_(1, cell_indices.unsqueeze(1), 1)
+        one_hot_encoded.scatter_(1, direction_indices.unsqueeze(1), 1)
+        one_hot_encoded.scatter_(1, split_indices.unsqueeze(1), 1)
+
+        return one_hot_encoded            
     def getUCBscore(self): 
         if self.N == 0:  # if unexplored nodes, maximum probability
             return  float('inf')
@@ -70,7 +95,9 @@ class Node:
         observation, info = game.step(action)
         return index, Node(game, game.is_done(), None, observation["MCTS"].as_dict(), action["MCTS"])
     def create_child(self):
-        if self.done: return 
+        if self.done: 
+            print("self.done in create child")
+            return 
         actions = []
         games = []
         mask = self.observation["action_mask"]
@@ -104,12 +131,9 @@ class Node:
             for t in tasks:
                 index, node = t.result()
                 child[index] = node
-        # for action, game in zip(actions, games):
-        #     observation, info = game.step(action)
-        #     child[index] = Node(game, game.is_done(), self, observation["MCTS"].as_dict(), action["MCTS"])  ### need to check the obervation part
-        #     index += 1
         self.child = child
         # if loud: print("create child number",len(child))
+
     def explore(self):
         # find leaf node by choosing nodes with max U
         current = self
@@ -137,13 +161,19 @@ class Node:
             parent.N += 1
             parent.T = parent.T + current.T
     def rollout(self):
+        mcts_observation = self.observation
         if self.done:
-            return 0
+            print("self.done in rollout")
+            if self.game.agent_won('MCTS'):   # TO DO: I guess, or new_game.agents[0]
+                if loud: print("MCTS rollout")
+                return 1/mcts_observation["observation"]["timestep"]
+            else:
+                if loud: print("Expander rollout")
+                return -1/mcts_observation["observation"]["timestep"]
         step = 0
-        max_step = 150 ### To improve: truncated number
+        max_step = 20 ### To improve: truncated number
         new_game = deepcopy(self.game)
         npc = ExpanderAgent()
-        mcts_observation = self.observation
         npc_observation = new_game.agent_observation("Expander").as_dict()
         # directions = [Direction.UP, Direction.DOWN, Direction.LEFT, Direction.RIGHT]
         while not new_game.is_done():
@@ -177,9 +207,13 @@ class Node:
             else:
                 encode_obs = self.model.encode_observation(mcts_observation)
                 encode_obs = torch.FloatTensor(encode_obs)#.unsqueeze(0)
+                t_va = torch.tensor(valid_actions)
+                t_validaction = torch.concat((self.encode_valid_action(t_va, 0), self.encode_valid_action(t_va, 1)), dim = 0)
+                
                 with torch.no_grad():
-                    action = self.model.compute_argmaxQ(encode_obs)
-
+                    q_values = self.model.compute_Qvalues(encode_obs)
+                    valid_q = torch.matmul(q_values,t_validaction.float().transpose(0, 1))
+                    action = self.model.decode_action(t_validaction[valid_q.argmax()], 5, 5)#self.model.compute_argmaxQ(encode_obs)
 
             observation, info = new_game.step({"MCTS": action, "Expander": npc.act(npc_observation)})  ## problem? need to mimic both agent and npc
             mcts_observation = observation["MCTS"].as_dict()
@@ -191,34 +225,33 @@ class Node:
                     return 1/mcts_observation["observation"]["timestep"]
                 else:
                     if loud: print("Expander rollout")
-                    return -1
+                    return -1/mcts_observation["observation"]["timestep"]
             if step >= max_step:   ## To imporve: truncated score reward
                 return -1/max_step
-                # status = new_game.get_infos()
-                # mct_army, mct_land = status["MCTS"]["army"], status["MCTS"]["land"]
-                # npc_army, npc_land = status["Expander"]["army"], status["Expander"]["land"]
-                # army_score = mct_army/(mct_army+npc_army)
-                # land_score = mct_land/(mct_land+npc_land)
-                # return 0.7 * land_score + 0.3 * army_score # (2 * army_score * land_score) / (army_score + land_score)
-
 
 
     def next(self):
-        # if self.done: raise ValueError("game has ended")
-        if not self.child: return self, self.action_index# raise ValueError("no children found and game hasn't ended")
+        if not self.child: 
+            print("no child in MCTS")
+            action = {
+                    "pass": 1,
+                    "cell": (0, 0),
+                    "direction": 0,
+                    "split": 0,
+                }
+            return self, action 
         child = self.child 
-        max_N = max(node.N for node in child.values())
-        max_children = [c for a,c in child.items() if c.N == max_N]
+        max_av_T = max(node.T/node.N for node in child.values())
+        max_children = [c for a,c in child.items() if c.T/c.N == max_av_T]
         if len(max_children) == 0:
-            print("error zero length", max_N)
-        if loud and len(max_children) == 1: print("only one child in next")
+            print("error zero length", max_av_T)
         max_child = random.choice(max_children)
         return max_child, max_child.action_index
 
-MCTS_POLICY_EXPLORE = 50   ### To improve: number of exploration
+
+MCTS_POLICY_EXPLORE = 100   ### To improve: number of exploration
 
 def Policy_MCTS(mytree):
-    # if mytree.done: return mytree, mytree.action_index ### is it right?
     for i in range(MCTS_POLICY_EXPLORE):
         if loud: print("exploring", i)
         mytree.explore()
@@ -229,7 +262,6 @@ def Policy_MCTS(mytree):
 class MCTSAgent(Agent):
     def __init__(self, id: str = 'MCTS', color: tuple[int, int, int] = (0, 245, 0)):
         super().__init__(id, color)
-        self.tree = None
         self.current = None
     
     def encode_valid_action(self, valid_actions, split = 0, grid_width = 5, grid_height = 5):
@@ -260,12 +292,13 @@ class MCTSAgent(Agent):
 
     def act(self, observation: Observation, game: Game, done: bool, prev_act: Action, train = True) -> Action:  # TO DO: the type of game 
         ### TODO: define and train the MCTS model
-        if self.tree == None: # create root
-            Node.set_shared_model("q_function_model_2.pth", observation,(5, 5))
-            self.tree = Node(game, done, None, observation, None)  ### TO DO: parent?
-            self.current = self.tree
-        self.current.observation = observation  ### do we need refresh current node?
-        self.current.game = game
+        if self.current == None: # create root
+            Node.set_shared_model("q_function_model_6.pth", observation,(5, 5))
+            self.current = Node(game, done, None, observation, None)
+        new_node = Node(game, done, self.current, observation, prev_act)
+        self.current = new_node
+        # self.current.observation = observation  ### do we need refresh current node?
+        # self.current.game = game
         # if debuging:
         mask = observation["action_mask"]
         # observation = observation["observation"]
@@ -292,6 +325,7 @@ class MCTSAgent(Agent):
                 "split": split_army,
             }
         elif train:
+            if self.current.done == True: print("current done in act")
             child_node, action = Policy_MCTS(self.current.copynode())#Policy_MCTS(deepcopy(self.current))  ## TO DO: from where do MCTS
             self.current.child = child_node
             child_node.parent = self.current
@@ -311,29 +345,3 @@ class MCTSAgent(Agent):
         return action 
     def reset(self):
         pass
-
-
-def DeepQAgent(Agent):
-    def __init__(self, id: str = 'DeepQ', color: tuple[int, int, int] = (255, 165, 0), gridsize=(5, 5), lr=1e-3):
-        super().__init__(id, color)
-        self.model = Qfunction(gridsize, lr)
-        self.gridsize = gridsize
-        self.lr = lr
-    
-    def initialize(self, model_path, obs):
-        if os.path.exists(model_path):
-            en_obs = self.model.encode_observation(obs)
-            action_space = 2 * self.grid_size[0] * self.grid_size[1] * 4 * 2
-            self.model.initialize_model(len(en_obs),action_space)
-            self.model.loadload_state_dict(torch.load(model_path))
-            self.model.eval()
-        else:
-            print(f"Model file '{model_path}' does not exist. Skipping load.")
-    
-    def act(self, observation: Observation, game: Game, done: bool, prev_act: Action) -> Action:
-            encode_obs = self.model.encode_observation(observation, with_mask=True)
-            encode_obs = torch.FloatTensor(encode_obs).unsqueeze(0)
-            with torch.no_grad():
-                action = self.model.compute_argmaxQ(encode_obs)
-            if loud: print('argmax action',action)   
-            return action     

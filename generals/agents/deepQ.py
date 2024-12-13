@@ -77,44 +77,6 @@ class Qfunction(object):
             "split": _split
         }
 
-    # def encode_action(self, action, grid_width, grid_height):
-    #     _pass = action["pass"]
-    #     _split = action["split"]
-    #     _cell = action["cell"]
-    #     _direction = action["direction"]
-    #     flat_index = (
-    #         _pass * grid_width * grid_height * 4 * 2 +
-    #         (_cell[0] * grid_width + _cell[1]) * 4 * 2 +
-    #         _direction * 2 +
-    #         _split
-    #     )
-    #     return flat_index
-
-    # def decode_action(self, flat_index, grid_width, grid_height):
-    #     total_cells = grid_width * grid_height
-    #     total_directions = 4
-    #     total_splits = 2
-
-    #     # Decode components
-    #     _split = flat_index % total_splits
-    #     flat_index //= total_splits
-
-    #     _direction = flat_index % total_directions
-    #     flat_index //= total_directions
-
-    #     flat_cell_index = flat_index % total_cells
-    #     _cell = np.array([flat_cell_index // grid_width, flat_cell_index % grid_width])
-    #     flat_index //= total_cells
-
-    #     _pass = flat_index
-
-    #     return {
-    #         "pass": _pass,
-    #         "cell": _cell,
-    #         "direction": _direction,
-    #         "split": _split
-    #     }
-
     def encode_observation(self, obs, with_mask=True):
         observation = obs["observation"] if with_mask else obs 
         features = []
