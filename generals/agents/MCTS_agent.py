@@ -293,7 +293,7 @@ class MCTSAgent(Agent):
     def act(self, observation: Observation, game: Game, done: bool, prev_act: Action, train = True) -> Action:  # TO DO: the type of game 
         ### TODO: define and train the MCTS model
         if self.current == None: # create root
-            Node.set_shared_model("q_function_model_6.pth", observation,(5, 5))
+            Node.set_shared_model("q_function_model_8.pth", observation,(5, 5))
             self.current = Node(game, done, None, observation, None)
         new_node = Node(game, done, self.current, observation, prev_act)
         self.current = new_node

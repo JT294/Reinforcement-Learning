@@ -3,7 +3,7 @@ from generals.core.grid import GridFactory
 from generals.agents import ExpanderAgent  
 from generals.agents.MCTS_agent import MCTSAgent
 from generals.envs.gymnasium_generals import GymnasiumGenerals
-from .deepQ import Qfunction
+from generals.agents.deepQ import Qfunction
 
 from collections import deque
 import random
@@ -11,11 +11,11 @@ import torch
 import numpy as np
 import matplotlib.pyplot as plt
 
-model_name = "q_function_model_6"
+model_name = "q_function_model_7"
 loud = False
 lr = 1e-3
 tau = 5
-episodes = 30
+episodes = 50
 initialsize = 500 
 epsilon = .2
 epsilon_decay = .999 
@@ -26,6 +26,7 @@ grid_width = 5
 grid_height = 5
 agent = MCTSAgent()
 npc = ExpanderAgent()
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 grid_factory = GridFactory(    
     grid_dims=(grid_width, grid_height),  # Grid height and width
     mountain_density=0.2,  # Expected percentage of mountains
@@ -66,12 +67,10 @@ class ExperienceReplayBuffer:
 env = gym.make("gym-generals-v0", grid_factory=grid_factory, agent=agent, npc=npc, render_mode="human", reward_fn=reward_function)
 observation, info = env.reset()
 terminated = truncated = False
-replay_buffer = ExperienceReplayBuffer()#deque(maxlen=10000)
+replay_buffer = ExperienceReplayBuffer()
 Qprincipal = Qfunction((grid_width, grid_height), lr=lr)
 Qtarget =  Qfunction((grid_width, grid_height), lr=lr)
 encoded_state = Qprincipal.encode_observation(observation)
-# sample_action = {"pass": 0, "cell": [0, 0], "direction": 0, "split": 0}
-# encoded_action = Qprincipal.encode_action(sample_action, grid_width=grid_width, grid_height=grid_height)
 action_space = 2 + grid_width * grid_height + 4 + 2
 Qprincipal.initialize_model(len(encoded_state), action_space)
 Qtarget.initialize_model(len(encoded_state), action_space)
@@ -80,7 +79,6 @@ ave_reward = []
 for e in range(episodes):
     agent = MCTSAgent()
     observation, info = env.reset()
-    # state = Qprincipal.encode_observation(observation)
     terminated, truncated = False, False 
     prev_act = 0
     while not (terminated or truncated):
@@ -88,10 +86,6 @@ for e in range(episodes):
         if game is None:
             raise RuntimeError("The environment does not contain a 'game' attribute.")
         action = agent.act(observation, game, terminated, prev_act) # agent.act(observation)
-        # if np.random.rand() < epsilon:
-        #     action = env.action_space.sample()
-        # else:
-        # action = Qprincipal.compute_argmaxQ(state) ### which one, need see
         
         next_obs, reward, terminated, truncated, info = env.step(action)   
         prev_act = action      
@@ -106,15 +100,14 @@ for e in range(episodes):
                     for idx, entry in enumerate(replay_buffer):
                         file.write(f"Entry {idx}:\n{entry}\n\n")
                 
-            batch = replay_buffer.sample(32)#random.sample(replay_buffer, 32)
+            batch = replay_buffer.sample(32)
             states, actions, rewards, next_state, done = zip(*batch)
-            states = torch.FloatTensor(np.array(states))
-            # actions = [Qtarget.decode_action(ac, grid_width=grid_width, grid_height=grid_height) for ac in actions]
+            states = torch.FloatTensor(np.array(states)).to(device)
             actions = [torch.tensor(action) if not isinstance(action, torch.Tensor) else action for action in actions] ### need to check problem
-            actions = torch.stack(actions)
-            rewards = torch.FloatTensor(rewards)
-            next_state = torch.FloatTensor(np.array(next_state))
-            done = torch.FloatTensor(done)
+            actions = torch.stack(actions).to(device)
+            rewards = torch.FloatTensor(rewards).to(device)
+            next_state = torch.FloatTensor(np.array(next_state)).to(device)
+            done = torch.FloatTensor(done).to(device)
             max_next_Q = Qtarget.compute_maxQvalues(next_state)
             targets = rewards + gamma * max_next_Q * (1 - done)
             if loud: print("states shape ", states.shape, "actions shape ", actions.shape)
@@ -129,7 +122,7 @@ for e in range(episodes):
         # state = Qprincipal.encode_observation(observation)#next_state
         total_reward += reward
         steps += 1
-        env.render()
+        #env.render()
     ave_reward.append(total_reward/steps)
     print(f"Episode {e + 1}, Total Reward: {total_reward}, Steps: {steps}")
 torch.save(Qprincipal.model.state_dict(), f"{model_name}.pth")
@@ -143,4 +136,3 @@ plt.ylabel("Average Reward")
 plt.grid()
 plt.savefig(f"{model_name}.png", dpi=300)  # 指定文件名和分辨率
 plt.show()
-

@@ -1,3 +1,15 @@
+## **Project Description**
+
+Using an MCTS+Deep Q structure, we trained an AI to play the game generals.io. The environment utilizes the official Gymnasium framework.
+
+**Model structure**
+
+deepQ.py: Implements the Deep Q model.
+train_MCTS.py: Used to train the Deep Q model.
+MCTS_agent.py: Facilitates interactions between the model and the environment.
+
+Below is the README of the original environment.
+
 <div align="center">
 
 ![Gameplay GIF](https://raw.githubusercontent.com/strakam/generals-bots/master/generals/assets/gifs/wider_gameplay.gif)

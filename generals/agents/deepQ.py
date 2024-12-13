@@ -5,6 +5,7 @@ import torch.nn as nn
 loud = False
 class Qfunction(object):
     def __init__(self, gridsize, lr):
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.gridsize = gridsize 
         self.lr = lr 
         self.all_action = self.get_action_onehot(gridsize[0], gridsize[1])
@@ -12,14 +13,15 @@ class Qfunction(object):
         self.obssize = obssize
         self.actsize = actsize
         self.model = torch.nn.Sequential(
-            torch.nn.Linear(obssize, 64),
+            torch.nn.Linear(obssize, 512),
             torch.nn.ReLU(),
-            torch.nn.Linear(64, 128),
+            torch.nn.Linear(512, 512),
             torch.nn.ReLU(),
-            torch.nn.Linear(128, actsize)
-        )
+            torch.nn.Linear(512, 512),
+            torch.nn.ReLU(),
+            torch.nn.Linear(512, actsize)
+        ).to(self.device)
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr = self.lr)
-        # self.criterion = nn.CrossEntropyLoss()
         
     def get_action_onehot(self, grid_width, grid_height):
         actions = []
@@ -30,13 +32,13 @@ class Qfunction(object):
                         for split in range(2):
                             action = {'pass': pas, 'cell': (x, y), 'direction': direction, 'split': split}
                             actions.append(self.encode_action(action, grid_width, grid_height))
-        return torch.tensor(actions)
+        return torch.tensor(actions).to(self.device)
 
     def encode_action(self, action, grid_width, grid_height):
         total_cells = grid_width * grid_height
         total_directions = 4
         total_splits = 2
-        total_passes = 2  # Assuming 'pass' can be 0 or 1
+        total_passes = 2  
 
         # Create a zero-filled array for one-hot encoding
         size = total_cells + total_directions + total_splits + total_passes
@@ -60,7 +62,7 @@ class Qfunction(object):
         total_cells = grid_width * grid_height
         total_directions = 4
         total_splits = 2
-        total_passes = 2  # Assuming 'pass' can be 0 or 1
+        total_passes = 2  
 
         # Extract indices from one-hot encoded vector
         _pass = np.argmax(one_hot_encoded[:total_passes])
@@ -93,34 +95,23 @@ class Qfunction(object):
             state_vector = np.concatenate([state_vector, mask])  ### attention. need to code without mask
         return state_vector 
     def compute_Qvalues(self, states, actions=None):
-        # states = self.encode_observation(states) ### attention, do I need this
-        states = torch.FloatTensor(states)
         q_preds = self.model(states)
         if actions == None: return q_preds
-        # action_onehot = self.encode_action(actions, self.gridsize[0], self.gridsize[1])  ### attention for actsize!
         if loud: print("q_preds size", q_preds.shape, "action size ", actions.shape)
-        q_preds_selected = torch.sum(q_preds * actions, axis = -1)#q_preds.gather(dim=1, index=actions.unsqueeze(-1)).squeeze(-1)#
+        q_preds_selected = torch.sum(q_preds * actions, axis = -1)
         return q_preds_selected 
     def compute_maxQvalues(self, states):
-        # states = self.encode_observation(states) ### attention. do i need it
-        states = torch.FloatTensor(states)
-        Qvalues = self.model(states).detach()  # Avoid .cpu().numpy()
+        Qvalues = self.model(states).detach() 
         allQ = torch.matmul(Qvalues, self.all_action.float().transpose(0, 1))
         q_preds = torch.max(allQ, dim=1)[0]  # Use PyTorch max    
-
         return q_preds
+    
     def compute_argmaxQ(self, states):
-        # states = self.encode_observation(states) ### attention. do i need it
-        states = torch.FloatTensor(states)
-        Qvalues = self.model(states).detach().cpu().numpy()  ### attention, do we need detach
-        # q_action_index = np.argmax(Qvalues.flatten())
+        Qvalues = self.model(states).detach().cpu().numpy()  
         action_dict = self.decode_action(Qvalues, self.gridsize[0], self.gridsize[1])
         return action_dict 
-    # def 
+
     def train(self, states, actions, targets):
-        states = torch.FloatTensor(states)
-        actions = torch.LongTensor(actions)
-        targets = torch.FloatTensor(targets)
         q_preds_selected = self.compute_Qvalues(states, actions)
         # loss = self.criterion(q_preds_selected, targets)
         loss = torch.mean((q_preds_selected - targets)**2)
@@ -128,4 +119,3 @@ class Qfunction(object):
         loss.backward()
         self.optimizer.step()
         return loss.detach().cpu().data.numpy()
-
