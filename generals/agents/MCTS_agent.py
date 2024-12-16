@@ -341,8 +341,8 @@ class MCTSAgent(Agent):
                 t_validaction = torch.concat((self.encode_valid_action(t_va, 0), self.encode_valid_action(t_va, 1)), dim = 0).to(device)
                 q_values = self.current.shared_model.compute_Qvalues(encode_obs)
                 valid_q = torch.matmul(q_values,t_validaction.float().transpose(0, 1))
-                #index=valid_q.multinomial(num_samples=1).item()
-                action = self.current.shared_model.decode_action(t_validaction[valid_q.argmax()], 5, 5)#.compute_argmaxQ(encode_obs)
+                index=valid_q.multinomial(num_samples=1).item()
+                action = self.current.shared_model.decode_action(t_validaction[index], 5, 5)#.compute_argmaxQ(encode_obs)
             if loud: print('argmax action',action)
         return action 
     def reset(self):
