@@ -16,12 +16,12 @@ from generals.core.observation import Observation
 from .agent import Agent
 from .expander_agent import ExpanderAgent 
 from .deepQ import Qfunction
-
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 loud = False
 debuging = False
 class Node:
     shared_model = None
-    def __init__(self, game, done, parent, observation, action_index):
+    def __init__(self, game, done, parent, observation, action_index,lr=1e-3):
         self.child = None 
         self.T = 0  # total rewards from MCTS exploration
         self.N = 0  # visit count
@@ -31,14 +31,14 @@ class Node:
         self.parent = weakref.ref(parent) if parent is not None else None # link to parent
         self.action_index = action_index # action leads to current node
         self.model = Node.shared_model  ### TO DO: want to train a deepQ model
+
+
     @classmethod
     def set_shared_model(cls, model_path, obs, grid_size, lr=1e-3):
         if os.path.exists(model_path):
             q_function = Qfunction(grid_size, lr=lr)
-            en_obs = q_function.encode_observation(obs)
-            action_space = 2 + grid_size[0] * grid_size[1] + 4 + 2
-            q_function.initialize_model(len(en_obs),action_space)
-            q_function.model.load_state_dict(torch.load(model_path))
+            q_function.initialize_model(331,33)
+            q_function.model.load_state_dict(torch.load(model_path,weights_only=True))
             q_function.model.eval()
             cls.shared_model = q_function
         else:
@@ -96,7 +96,7 @@ class Node:
         return index, Node(game, game.is_done(), None, observation["MCTS"].as_dict(), action["MCTS"])
     def create_child(self):
         if self.done: 
-            print("self.done in create child")
+            #print("self.done in create child")
             return 
         actions = []
         games = []
@@ -163,7 +163,7 @@ class Node:
     def rollout(self):
         mcts_observation = self.observation
         if self.done:
-            print("self.done in rollout")
+            #print("self.done in rollout")
             if self.game.agent_won('MCTS'):   # TO DO: I guess, or new_game.agents[0]
                 if loud: print("MCTS rollout")
                 return 1/mcts_observation["observation"]["timestep"]
@@ -178,6 +178,8 @@ class Node:
         # directions = [Direction.UP, Direction.DOWN, Direction.LEFT, Direction.RIGHT]
         while not new_game.is_done():
             step += 1
+            if step >= max_step:   ## To imporve: truncated score reward
+                return -1/max_step
             mask = mcts_observation["action_mask"]
             valid_actions = np.argwhere(mask == 1)
             if len(valid_actions) == 0:  # No valid actions
@@ -206,14 +208,15 @@ class Node:
                 }
             else:
                 encode_obs = self.model.encode_observation(mcts_observation)
-                encode_obs = torch.FloatTensor(encode_obs)#.unsqueeze(0)
+                encode_obs = torch.FloatTensor(encode_obs).to(device)#.unsqueeze(0)
                 t_va = torch.tensor(valid_actions)
-                t_validaction = torch.concat((self.encode_valid_action(t_va, 0), self.encode_valid_action(t_va, 1)), dim = 0)
+                t_validaction = torch.concat((self.encode_valid_action(t_va, 0), self.encode_valid_action(t_va, 1)), dim = 0).to(device)
                 
                 with torch.no_grad():
                     q_values = self.model.compute_Qvalues(encode_obs)
                     valid_q = torch.matmul(q_values,t_validaction.float().transpose(0, 1))
-                    action = self.model.decode_action(t_validaction[valid_q.argmax()], 5, 5)#self.model.compute_argmaxQ(encode_obs)
+                    index=valid_q.multinomial(num_samples=1).item()
+                    action = self.model.decode_action(t_validaction[index], 5, 5)#self.model.compute_argmaxQ(encode_obs)
 
             observation, info = new_game.step({"MCTS": action, "Expander": npc.act(npc_observation)})  ## problem? need to mimic both agent and npc
             mcts_observation = observation["MCTS"].as_dict()
@@ -226,8 +229,7 @@ class Node:
                 else:
                     if loud: print("Expander rollout")
                     return -1/mcts_observation["observation"]["timestep"]
-            if step >= max_step:   ## To imporve: truncated score reward
-                return -1/max_step
+
 
 
     def next(self):
@@ -241,15 +243,15 @@ class Node:
                 }
             return self, action 
         child = self.child 
-        max_av_T = max(node.T/node.N for node in child.values())
-        max_children = [c for a,c in child.items() if c.T/c.N == max_av_T]
+        max_av_T = max(node.T/(node.N+0.01) for node in child.values())
+        max_children = [c for a,c in child.items() if c.T/(c.N+0.01) == max_av_T]
         if len(max_children) == 0:
             print("error zero length", max_av_T)
         max_child = random.choice(max_children)
         return max_child, max_child.action_index
 
 
-MCTS_POLICY_EXPLORE = 100   ### To improve: number of exploration
+MCTS_POLICY_EXPLORE = 50   ### To improve: number of exploration
 
 def Policy_MCTS(mytree):
     for i in range(MCTS_POLICY_EXPLORE):
@@ -260,7 +262,7 @@ def Policy_MCTS(mytree):
     return next_tree, next_action
 
 class MCTSAgent(Agent):
-    def __init__(self, id: str = 'MCTS', color: tuple[int, int, int] = (0, 245, 0)):
+    def __init__(self, id: str = 'MCTS', color: tuple[int, int, int] = (0, 145, 0)):
         super().__init__(id, color)
         self.current = None
     
@@ -293,7 +295,7 @@ class MCTSAgent(Agent):
     def act(self, observation: Observation, game: Game, done: bool, prev_act: Action, train = True) -> Action:  # TO DO: the type of game 
         ### TODO: define and train the MCTS model
         if self.current == None: # create root
-            Node.set_shared_model("q_function_model_8.pth", observation,(5, 5))
+            Node.set_shared_model("q_function_model.pth", observation,(5, 5))
             self.current = Node(game, done, None, observation, None)
         new_node = Node(game, done, self.current, observation, prev_act)
         self.current = new_node
@@ -303,7 +305,6 @@ class MCTSAgent(Agent):
         mask = observation["action_mask"]
         # observation = observation["observation"]
         valid_actions = np.argwhere(mask == 1)
-        print(valid_actions)
         if len(valid_actions) == 0 or done or self.current.done:
             if loud: print("DO nothing in MCTSAgent.act")
             return {
@@ -334,14 +335,18 @@ class MCTSAgent(Agent):
         else: ## not train
             self.current = Node(game, done, None, observation, None)
             encode_obs = self.current.shared_model.encode_observation(observation, with_mask=True)
-            encode_obs = torch.FloatTensor(encode_obs)#.unsqueeze(0)
+            encode_obs = torch.FloatTensor(encode_obs).to(device)#.unsqueeze(0)
             with torch.no_grad():
                 t_va = torch.tensor(valid_actions)
-                t_validaction = torch.concat((self.encode_valid_action(t_va, 0), self.encode_valid_action(t_va, 1)), dim = 0)
+                t_validaction = torch.concat((self.encode_valid_action(t_va, 0), self.encode_valid_action(t_va, 1)), dim = 0).to(device)
                 q_values = self.current.shared_model.compute_Qvalues(encode_obs)
                 valid_q = torch.matmul(q_values,t_validaction.float().transpose(0, 1))
+                #index=valid_q.multinomial(num_samples=1).item()
                 action = self.current.shared_model.decode_action(t_validaction[valid_q.argmax()], 5, 5)#.compute_argmaxQ(encode_obs)
             if loud: print('argmax action',action)
         return action 
     def reset(self):
         pass
+
+
+    
